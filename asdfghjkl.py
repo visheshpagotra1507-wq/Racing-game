@@ -1,194 +1,168 @@
+import tkinter as tk
+from tkinter import messagebox
 import random
-import time
-import sys
 
-# --- GAME DATA ---
-CARS = {
-    "1": {"name": "Starter Hatchback", "price": 0, "speed": 10, "handling": 8},
-    "2": {"name": "Porsche 911 GT3", "price": 500, "speed": 18, "handling": 15},
-    "3": {"name": "Ferrari SF90", "price": 1200, "speed": 22, "handling": 14},
-    "4": {"name": "Bugatti Chiron", "price": 2500, "speed": 26, "handling": 12},
-}
-
-MODES = {
-    "1": "Classic Circuit (Race against aggressive AI)",
-    "2": "Time Attack (Beat the clock before it runs out)",
-    "3": "Elimination (Last place gets blown up every 10 seconds)"
-}
-
-UNEXPECTED_EVENTS = [
-    {"name": "An angry flock of geese blocks the track!", "effect": -5, "type": "bad"},
-    {"name": "Sudden localized EMP storm!", "effect": -8, "type": "bad"},
-    {"name": "A secret nitrous slipstream opens up!", "effect": 10, "type": "good"},
-    {"name": "A rival drops a massive banana peel!", "effect": -4, "type": "bad"},
-    {"name": "Tailwind boost from a passing helicopter!", "effect": 6, "type": "good"}
-]
-
-# --- PLAYER PROFILE ---
-class Player:
-    def __init__(self):
-        self.coins = 100
-        self.unlocked_cars = ["1"]
-        self.current_car = "1"
-        self.score = 0
-
-    def get_car_name(self):
-        return CARS[self.current_car]["name"]
-
-    def get_car_stat(self, stat):
-        return CARS[self.current_car][stat]
-
-# --- GAME ENGINE ---
-class RacingGame:
-    def __init__(self):
-        self.player = Player()
-
-    def run(self):
-        print("  WELCOME TO HYPERDRIVE: OFF-LINE RACING ")
-        while True:
-            print("\n--- MAIN MENU ---")
-            print(f"Current Car: {self.player.get_car_name()} | Coins: {self.player.coins} | High Score: 🏆 {self.player.score}")
-            print("1. Enter Race")
-            print("2. Visit Luxury Car Dealership")
-            print("3. Exit Game")
-            
-            choice = input("Select an option: ").strip()
-            if choice == "1":
-                self.start_race_sequence()
-            elif choice == "2":
-                self.car_shop()
-            elif choice == "3":
-                print("Thanks for playing! Keeping the rubber burning.")
-                break
-            else:
-                print("Invalid input. Try again.")
-
-    # --- SECURITY/LOADING CAPTCHA ---
-    def loading_security_check(self):
-        print("\n[LOADING ASSETS & VERIFYING ANTI-CHEAT]...")
-        time.sleep(1)
+class PlayableRacingGame:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Hyperdrive Arcade")
         
-        # Driving-themed security codes
-        safety_codes = ["BUCKLE_UP", "DRIFT_KING", "NO_LIMIT", "BRAKE_LATE", "TURBO_CHARGE"]
-        secure_code = random.choice(safety_codes)
-        
-        print("\n SECURITY CAPTCHA REQUIRED TO IGNITE ENGINE ")
-        print(f"Type the following driving authorization code exactly: [ {secure_code} ]")
-        
-        start_time = time.time()
-        user_input = input("Enter Code: ").strip()
-        end_time = time.time()
+        # Game State Variables
+        self.coins, self.score, self.high_score = 100, 0, 0
+        self.car_tier = 1 # 1: Starter, 2: Porsche, 3: Bugatti
+        self.lane = 1     # Lanes: 0 (Top), 1 (Middle), 2 (Bottom)
+        self.lane_y = [50, 110, 170]
+        self.obstacles = []
+        self.playing = False
+        self.nitro_cool = 0
+        self.security_code = str(random.randint(1000, 9999)) 
 
-        if user_input == secure_code and (end_time - start_time) < 10:
-            print(" Authentication successful. Engine Primed. Launching race...")
-            time.sleep(1)
-            return True
+        # --- UI TOP BAR (Stats & Security) ---
+        self.header = tk.Label(root, text=f"Coins: 🪙{self.coins} | Score: 🏆{self.score} | Code: {self.security_code}", font=("Arial", 12, "bold"))
+        self.header.pack(pady=5)
+        
+        self.code_entry = tk.Entry(root, justify='center', font=("Arial", 10))
+        self.code_entry.insert(0, "Type Code Here")
+        self.code_entry.pack()
+
+        # --- GAME CANVAS ---
+        self.canvas = tk.Canvas(root, width=600, height=240, bg="#2c3e50")
+        self.canvas.pack(pady=10)
+        
+        # Draw Roads Lanes
+        self.canvas.create_line(0, 90, 600, 90, fill="white", dash=(10, 10))
+        self.canvas.create_line(0, 150, 600, 150, fill="white", dash=(10, 10))
+        
+        # Player Car Asset
+        self.player = self.canvas.create_rectangle(40, self.lane_y[self.lane]-15, 90, self.lane_y[self.lane]+15, fill="cyan", outline="white")
+
+        # --- CONTROLS / SHOP BOTTOM PANEL ---
+        self.btn_frame = tk.Frame(root)
+        self.btn_frame.pack(pady=5)
+        
+        self.btn_start = tk.Button(self.btn_frame, text="🟢 Start Race", bg="green", fg="white", font=("Arial", 10, "bold"), command=self.verify_and_start)
+        self.btn_start.grid(row=0, column=0, padx=10)
+        
+        self.btn_shop = tk.Button(self.btn_frame, text="🛒 Buy Luxury Car (🪙250)", bg="gold", font=("Arial", 10, "bold"), command=self.buy_car)
+        self.btn_shop.grid(row=0, column=1, padx=10)
+
+        # Bind Keyboard Inputs
+        self.root.bind("<Up>", lambda e: self.move_lane(-1))
+        self.root.bind("<Down>", lambda e: self.move_lane(1))
+        self.root.bind("<space>", lambda e: self.activate_nitro())
+
+    def verify_and_start(self):
+        if self.code_entry.get() != self.security_code:
+            messagebox.showerror("Security Triggered", "Incorrect security key! Ignition locked.")
+            return
+        
+        # Clean up previous race data
+        for obs in self.obstacles: self.canvas.delete(obs)
+        self.obstacles.clear()
+        
+        self.score, self.playing = 0, True
+        self.code_entry.config(state=tk.DISABLED)
+        self.btn_start.config(state=tk.DISABLED)
+        self.game_loop()
+
+    def move_lane(self, direction):
+        if not self.playing: return
+        self.lane = max(0, min(2, self.lane + direction))
+        p_coords = self.canvas.coords(self.player)
+        # Shift Y position smoothly to the current lane array definition
+        self.canvas.coords(self.player, p_coords[0], self.lane_y[self.lane]-15, p_coords[2], self.lane_y[self.lane]+15)
+
+    def activate_nitro(self):
+        if self.playing and self.nitro_cooldown <= 0:
+            self.nitro_cooldown = 50 # Lasts for roughly 50 frames
+            self.canvas.itemconfig(self.player, fill="magenta")
+
+    def buy_car(self):
+        if self.coins >= 250 and self.car_tier < 3:
+            self.coins -= 250
+            self.car_tier += 1
+            names = {2: "Porsche 911 GT3 (Red)", 3: "Bugatti Chiron (Gold)"}
+            colors = {2: "red", 3: "gold"}
+            self.canvas.itemconfig(self.player, fill=colors[self.car_tier])
+            messagebox.showinfo("Dealership", f"Unlocked & Equipped: {names[self.car_tier]}!")
+            self.update_ui()
         else:
-            print("Authentication failed or timed out! The pit crew locked the garage.")
-            return False
+            messagebox.showwarning("Shop", "Not enough coins or maximum car tier reached!")
 
-    # --- CAR SHOP ---
-    def car_shop(self):
-        print("\n --- LUXURY CAR DEALERSHIP --- ")
-        for key, car in CARS.items():
-            status = "[OWNED]" if key in self.player.unlocked_cars else f"Price: {car['price']} coins"
-            print(f"{key}. {car['name']} - Speed: {car['speed']}, Handling: {car['handling']} | {status}")
-        
-        choice = input("\nSelect a car to buy/equip (or press Enter to return): ").strip()
-        if choice in CARS:
-            if choice in self.player.unlocked_cars:
-                self.player.current_car = choice
-                print(f"Successfully equipped {CARS[choice]['name']}!")
-            else:
-                if self.player.coins >= CARS[choice]["price"]:
-                    self.player.coins -= CARS[choice]["price"]
-                    self.player.unlocked_cars.append(choice)
-                    self.player.current_car = choice
-                    print(f" Congratulations! You bought and equipped the {CARS[choice]['name']}!")
+    def update_ui(self):
+        self.header.config(text=f"Coins: 🪙{self.coins} | Score: 🏆{self.score} | Code: {self.security_code}")
+
+    def game_loop(self):
+        if not self.playing: return
+
+        # 1. Spawn Obstacles / Enemy Traffic
+        if random.random() < 0.05:
+            spawn_lane = random.choice(self.lane_y)
+            obs = self.canvas.create_rectangle(610, spawn_lane-15, 650, spawn_lane+15, fill="orange", outline="black")
+            self.obstacles.append(obs)
+
+        # 2. Unexpected Modifier Events (Dynamic text alerts)
+        if random.random() < 0.005:
+            event = random.choice(["ROAD BLOCKS SPAWNING FASTER!", "WEATHER DELAY: SLOWDOWN!"])
+            self.canvas.create_text(300, 20, text=f"⚠️ {event}", fill="yellow", font=("Arial", 12, "bold"), tags="alert")
+            self.root.after(1500, lambda: self.canvas.delete("alert"))
+
+        # 3. Process Nitro State
+        speed_multiplier = 1.8 if self.nitro_cooldown > 0 else 1.0
+        if self.nitro_cooldown > 0:
+            self.nitro_cooldown -= 1
+            if self.nitro_cooldown == 0:
+                base_colors = {1: "cyan", 2: "red", 3: "gold"}
+                self.canvas.itemconfig(self.player, fill=base_colors[self.car_tier])
+
+        # 4. Movement & Collision Evaluation Loops
+        p_box = self.canvas.coords(self.player)
+        self.score += int(1 * self.car_tier * speed_multiplier)
+        self.update_ui()
+
+        for obs in list(self.obstacles):
+            self.canvas.move(obs, -int(7 * speed_multiplier * (1 if self.car_tier==1 else 1.2)), 0)
+            o_box = self.canvas.coords(obs)
+
+            # Collision check logic
+            if o_box[0] < p_box[2] and o_box[2] > p_box[0] and o_box[1] < p_box[3] and o_box[3] > p_box[1]:
+                if self.nitro_cooldown > 0: # Nitro smashes through cars!
+                    self.canvas.delete(obs)
+                    self.obstacles.remove(obs)
+                    self.coins += 20
+                    continue
                 else:
-                    print(" Insufficient funds! Win more races to earn coins.")
+                    self.game_over()
+                    return
 
-    # --- RACE MODE SYSTEM ---
-    def start_race_sequence(self):
-        print("\n--- SELECT GAME MODE --- ")
-        for key, description in MODES.items():
-            print(f"{key}. {description}")
+            # Clear out-of-bounds obstacles to save memory
+            if o_box[2] < 0:
+                self.canvas.delete(obs)
+                self.obstacles.remove(obs)
+                self.coins += 10 * self.car_tier
+
+        self.root.after(30, self.game_loop) # Loop engine tick rate (~33 FPS)
+
+    def game_over(self):
+        self.playing = False
+        self.high_score = max(self.high_score, self.score)
         
-        mode_choice = input("Choose your mode: ").strip()
-        if mode_choice not in MODES:
-            print("Invalid mode. Returning to menu.")
-            return
+        # Rank calculations based on score tier achieved
+        rank = "ROOKIE"
+        if self.score > 1500: rank = "PRO"
+        if self.score > 3500: rank = "LEGEND"
 
-        # Trigger the unexpected loading security feature
-        if not self.loading_security_check():
-            return
-
-        self.execute_race(MODES[mode_choice])
-
-    # --- MAIN CORE RACING LOOP ---
-    def execute_race(self, mode_name):
-        print(f"\nGREEN LIGHT! Mode: {mode_name}")
-        print(f"Driving: {self.player.get_car_name()}")
+        messagebox.showinfo("CRASHED!", f"Race Over!\nFinal Score: {self.score}\nRank Earned: [{rank}]\nTotal Coins: 🪙{self.coins}")
         
-        distance_covered = 0
-        race_length = 100
-        powers = {"1": "Nitro Boost", "2": "Shield Generator"}
-        used_shield = False
-        
-        while distance_covered < race_length:
-            print(f"\nDistance Covered: [{ '▪' * (distance_covered // 10) }{ ' ' * (10 - (distance_covered // 10)) }] {distance_covered}/{race_length}m")
-            print("Powers available: [1] Nitro Boost  [2] Shield Generator  [3] Hold Steady")
-            
-            action = input("Trigger a power or hold steady: ").strip()
-            
-            # Handling Powers
-            speed_modifier = self.player.get_car_stat("speed")
-            if action == "1":
-                print("NITRO ENGAGED! Extra speed injection!")
-                speed_modifier += 10
-            elif action == "2":
-                print("  SHIELD ACTIVATED! Protected against the next disaster.")
-                used_shield = True
-            
-            # Base driving calculation
-            distance_covered += random.randint(5, speed_modifier)
+        # Reset Menu Configurations
+        self.security_code = str(random.randint(1000, 9999))
+        self.update_ui()
+        self.code_entry.config(state=tk.NORMAL)
+        self.code_entry.delete(0, tk.END)
+        self.code_entry.insert(0, "Type New Code")
+        self.btn_start.config(state=tk.NORMAL)
 
-            # UNEXPECTED EVENT TRIGGER (25% chance per turn)
-            if random.random() < 0.25 and distance_covered < race_length:
-                event = random.choice(UNEXPECTED_EVENTS)
-                print(f"\n UNEXPECTED EVENT: {event['name']}")
-                
-                if event["type"] == "bad":
-                    if used_shield:
-                        print(" Your shield absorbed the impact! No penalty!")
-                        used_shield = False
-                    else:
-                        print(f"Ouch! Speed penalized by {event['effect']} points.")
-                        distance_covered = max(0, distance_covered + event['effect'])
-                else:
-                    print(f"Awesome! Speed boosted by {event['effect']} points.")
-                    distance_covered += event["effect"]
-
-            time.sleep(1.5)
-
-        # Race Completion & Scoring Rank
-        print(f"\nCHEQUERED FLAG! You crossed the finish line!")
-        final_rank = random.choice(["1st", "2nd", "3rd", "4th"])
-        
-        coin_rewards = {"1st": 500, "2nd": 300, "3rd": 150, "4th": 50}
-        score_rewards = {"1st": 2000, "2nd": 1200, "3rd": 800, "4th": 200}
-        
-        earned_coins = coin_rewards[final_rank]
-        earned_score = score_rewards[final_rank]
-        
-        self.player.coins += earned_coins
-        self.player.score += earned_score
-        
-        print(f" Finish Rank: {final_rank} Place!")
-        print(f" Gained: {earned_coins} coins")
-        print(f" Score Gained: {earned_score} points")
-
-# --- START GAME ---
 if __name__ == "__main__":
-    game = RacingGame()
-    game.run()
+    window = tk.Tk()
+    game = PlayableRacingGame(window)
+    window.mainloop()
